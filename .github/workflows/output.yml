@@ -1,47 +1,76 @@
-name: Output
+name: Generate RS Ratings
 
 on:
-  # push:
-    # branches: [ main ]
+  # Run every weekday at 23:30 UTC (after US market close + data processing time)
   schedule:
-    - cron: "0 0 * * *"
+    - cron: '30 23 * * 1-5'
+  # Allow manual trigger from the Actions tab
+  workflow_dispatch:
 
 jobs:
-      build:
-        runs-on: ubuntu-latest
+  generate-rs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90        # Safety cutoff — batch mode should finish in ~30 min
 
-        steps:
-          - name: checkout repo content
-            uses: actions/checkout@v3 # checkout the repository content to github runner.
-          - name: setup python
-            uses: actions/setup-python@v3
-            with:
-              python-version: 3.8 #install the python needed
-          - name: execute py script # aggregate current data
-            run: |
-              python -m pip install -r requirements.txt
-              python relative-strength.py true false ${{ secrets.API_KEY }}
+    steps:
+      # ── 1. Checkout the main calculation repo ──────────────────────────────
+      - name: Checkout relative-strength repo
+        uses: actions/checkout@v4
 
-          - name: Push RSRATING.csv to TradingView git clone
-            run: |
-              git clone https://Fred6725:${{ secrets.PAT }}@github.com/Fred6725/seed_fred6725_rs_rating.git
-              cp ./output/RSRATING.csv ./seed_fred6725_rs_rating/data
-              cd seed_fred6725_rs_rating
-              git config user.name "CI" && git config user.email "ci@github.com"
-              git add --all
-              git commit -m "CI RSRATING update" || echo "nothing to commit"
-              git push || echo "nothing to push"
-          
-          - name: push to log git
-            run: |
-              git clone https://Fred6725:${{ secrets.PAT }}@github.com/Fred6725/rs-log.git
-              rm ./rs-log/output/* && cp -a ./output/. ./rs-log/output
-              cd rs-log
-              git config user.name "CI" && git config user.email "ci@github.com"
-              git add --all
-              git commit -m "CI output update" || echo "nothing to commit"
-              git push || echo "nothing to push"
-          - uses: actions/upload-artifact@v4 # Force modification
-            with:
-              name: rs_stocks.csv
-              path: output
+      # ── 2. Python 3.11 (THE CRITICAL FIX — 3.8 crashes with multitasking) ─
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ── 3. Dependencies ────────────────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify yfinance + curl_cffi
+        run: |
+          python -c "import yfinance; print('yfinance', yfinance.__version__)"
+          python -c "import curl_cffi; print('curl_cffi OK')"
+
+      # ── 4. Run the RS calculation ───────────────────────────────────────────
+      - name: Run relative strength calculation
+        run: python relative-strength.py true
+
+      # ── 5. Save ticker_info cache back to THIS repo ─────────────────────────
+      # Speeds up future runs — avoids re-fetching sector/industry for all tickers
+      - name: Save ticker_info cache
+        run: |
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          git add data_persist/ticker_info.json
+          git diff --staged --quiet || git commit -m "Update ticker_info cache $(date +'%Y-%m-%d')"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 6. Push output CSVs to rs-log (separate repo) ──────────────────────
+      # Requires secret RS_LOG_TOKEN — see GUIDE.md for how to create it
+      - name: Checkout rs-log repo
+        uses: actions/checkout@v4
+        with:
+          repository: Fred6725/rs-log
+          token: ${{ secrets.RS_LOG_TOKEN }}
+          path: rs-log
+
+      - name: Copy outputs to rs-log
+        run: |
+          cp output/rs_stocks.csv     rs-log/output/rs_stocks.csv
+          cp output/rs_industries.csv rs-log/output/rs_industries.csv
+          cp output/RSRATING.csv      rs-log/output/RSRATING.csv
+
+      - name: Commit and push to rs-log
+        working-directory: rs-log
+        run: |
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          git add output/
+          git diff --staged --quiet || git commit -m "RS Ratings update $(date +'%Y-%m-%d')"
+          git push
