@@ -1,30 +1,28 @@
 name: Generate RS Ratings
 
 on:
-  # Run every weekday at 23:30 UTC (after US market close + data processing time)
   schedule:
     - cron: '30 23 * * 1-5'
-  # Allow manual trigger from the Actions tab
   workflow_dispatch:
 
 jobs:
   generate-rs:
     runs-on: ubuntu-latest
-    timeout-minutes: 90        # Safety cutoff — batch mode should finish in ~30 min
+    timeout-minutes: 90
 
     steps:
-      # ── 1. Checkout the main calculation repo ──────────────────────────────
+      # ── 1. Checkout relative-strength ──────────────────────────────────────
       - name: Checkout relative-strength repo
         uses: actions/checkout@v4
 
-      # ── 2. Python 3.11 (THE CRITICAL FIX — 3.8 crashes with multitasking) ─
+      # ── 2. Python 3.11 ─────────────────────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      # ── 3. Dependencies ────────────────────────────────────────────────────
+      # ── 3. Dependencies ─────────────────────────────────────────────────────
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -35,12 +33,11 @@ jobs:
           python -c "import yfinance; print('yfinance', yfinance.__version__)"
           python -c "import curl_cffi; print('curl_cffi OK')"
 
-      # ── 4. Run the RS calculation ───────────────────────────────────────────
+      # ── 4. Run RS calculation ───────────────────────────────────────────────
       - name: Run relative strength calculation
         run: python relative-strength.py true
 
-      # ── 5. Save ticker_info cache back to THIS repo ─────────────────────────
-      # Speeds up future runs — avoids re-fetching sector/industry for all tickers
+      # ── 5. Save ticker_info cache ───────────────────────────────────────────
       - name: Save ticker_info cache
         run: |
           git config user.email "action@github.com"
@@ -51,8 +48,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── 6. Push output CSVs to rs-log (separate repo) ──────────────────────
-      # Requires secret RS_LOG_TOKEN — see GUIDE.md for how to create it
+      # ── 6. Push CSVs to rs-log ──────────────────────────────────────────────
       - name: Checkout rs-log repo
         uses: actions/checkout@v4
         with:
@@ -74,3 +70,28 @@ jobs:
           git add output/
           git diff --staged --quiet || git commit -m "RS Ratings update $(date +'%Y-%m-%d')"
           git push
+
+      # ── 7. Push RSRATING.csv to TradingView Pine Seeds repo ─────────────────
+      # This triggers check_data.yaml in seed_fred6725_rs_rating,
+      # which validates the data and creates a PR → upload_data.yaml → TradingView
+      - name: Checkout seed_fred6725_rs_rating repo
+        uses: actions/checkout@v4
+        with:
+          repository: Fred6725/seed_fred6725_rs_rating
+          token: ${{ secrets.RS_LOG_TOKEN }}
+          path: seed-repo
+
+      - name: Copy RSRATING.csv to seed repo data folder
+        run: |
+          cp output/RSRATING.csv seed-repo/data/RSRATING.csv
+
+      - name: Commit and push to seed_fred6725_rs_rating
+        working-directory: seed-repo
+        run: |
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          git add data/RSRATING.csv
+          git diff --staged --quiet || git commit -m "RS Rating data update $(date +'%Y-%m-%d')"
+          git push
+        # This push triggers check_data.yaml in seed_fred6725_rs_rating
+        # which runs validation and creates a PR → upload_data.yaml sends to TradingView
