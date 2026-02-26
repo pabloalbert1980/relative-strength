@@ -118,5 +118,5 @@ Maintenance assistance provided by [Claude](https://claude.ai) (Anthropic).
 ## Support the Project
 
 If this is useful to you, consider buying me a coffee ☕
----
+
 <a href="https://www.buymeacoffee.com/fred6725" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
