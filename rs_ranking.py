@@ -1,9 +1,10 @@
 #!/usr/bin/env python
-# rs_ranking.py — Fixed version
-# Changes vs original:
-#   1. pandas 2.x compatibility (pd.qcut behaviour)
-#   2. Minor robustness improvements (safer iloc access)
-#   3. Logic and output unchanged
+# rs_ranking.py — Updated version
+# New columns in rs_stocks.csv:
+#   Price, MarketCap, Float, ShortFloatPct, 52WkHigh, 52WkLow, PctFrom52WkHigh,
+#   AvgVol10, AvgVol30, AvgVol50, AvgVol60
+# Avg volumes calculated from candles (no extra API call).
+# Market data from ticker_info.json cache (populated by rs_data.py).
 
 import sys
 import pandas as pd
@@ -39,17 +40,30 @@ ALL_STOCKS = cfg("USE_ALL_LISTED_STOCKS")
 TICKER_INFO_FILE = os.path.join(DIR, "data_persist", "ticker_info.json")
 TICKER_INFO_DICT = read_json(TICKER_INFO_FILE)
 
-TITLE_RANK = "Rank"
-TITLE_TICKER = "Ticker"
-TITLE_TICKERS = "Tickers"
-TITLE_SECTOR = "Sector"
-TITLE_INDUSTRY = "Industry"
-TITLE_UNIVERSE = "Universe" if not ALL_STOCKS else "Exchange"
+# ── Column titles ─────────────────────────────────────────────────────────────
+
+TITLE_RANK       = "Rank"
+TITLE_TICKER     = "Ticker"
+TITLE_TICKERS    = "Tickers"
+TITLE_SECTOR     = "Sector"
+TITLE_INDUSTRY   = "Industry"
+TITLE_UNIVERSE   = "Universe" if not ALL_STOCKS else "Exchange"
+TITLE_RS         = "Relative Strength"
 TITLE_PERCENTILE = "Percentile"
-TITLE_1M = "1 Month Ago"
-TITLE_3M = "3 Months Ago"
-TITLE_6M = "6 Months Ago"
-TITLE_RS = "Relative Strength"
+TITLE_1M         = "1M_RS_Percentile"
+TITLE_3M         = "3M_RS_Percentile"
+TITLE_6M         = "6M_RS_Percentile"
+TITLE_PRICE      = "Price"
+TITLE_MKTCAP     = "MarketCap"
+TITLE_FLOAT      = "Float"
+TITLE_SHORT      = "ShortFloatPct"
+TITLE_52WH       = "52WkHigh"
+TITLE_52WL       = "52WkLow"
+TITLE_PCT_52WH   = "PctFrom52WkHigh"
+TITLE_AVGVOL10   = "AvgVol10"
+TITLE_AVGVOL30   = "AvgVol30"
+TITLE_AVGVOL50   = "AvgVol50"
+TITLE_AVGVOL60   = "AvgVol60"
 
 if not os.path.exists('output'):
     os.makedirs('output')
@@ -60,17 +74,17 @@ def relative_strength(closes: pd.Series, closes_ref: pd.Series):
     rs_stock = strength(closes)
     rs_ref = strength(closes_ref)
     rs = (1 + rs_stock) / (1 + rs_ref) * 100
-    rs = int(rs * 100) / 100  # round to 2 decimals
+    rs = int(rs * 100) / 100
     return rs
 
 def strength(closes: pd.Series):
-    """Calculates the performance of the last year (most recent quarter is weighted double)"""
+    """Yearly performance, most recent quarter weighted double."""
     try:
-        quarters1 = quarters_perf(closes, 1)
-        quarters2 = quarters_perf(closes, 2)
-        quarters3 = quarters_perf(closes, 3)
-        quarters4 = quarters_perf(closes, 4)
-        return 0.4 * quarters1 + 0.2 * quarters2 + 0.2 * quarters3 + 0.2 * quarters4
+        q1 = quarters_perf(closes, 1)
+        q2 = quarters_perf(closes, 2)
+        q3 = quarters_perf(closes, 3)
+        q4 = quarters_perf(closes, 4)
+        return 0.4 * q1 + 0.2 * q2 + 0.2 * q3 + 0.2 * q4
     except:
         return 0
 
@@ -81,7 +95,33 @@ def quarters_perf(closes: pd.Series, n):
     perf_cum = (pct_chg + 1).cumprod() - 1
     return perf_cum.tail(1).item()
 
-# ── TradingView CSV generation ────────────────────────────────────────────────
+# ── Market data helpers ───────────────────────────────────────────────────────
+
+def avg_volume(candles, days):
+    """Average daily volume over the last N trading days from candle data."""
+    try:
+        vols = [c["volume"] for c in candles[-days:] if c.get("volume") is not None]
+        return int(sum(vols) / len(vols)) if vols else None
+    except Exception:
+        return None
+
+def safe_info(ticker, field):
+    """Safely retrieve a field from the ticker_info cache."""
+    try:
+        return TICKER_INFO_DICT[ticker]["info"].get(field)
+    except (KeyError, TypeError):
+        return None
+
+def pct_from_52wk_high(price, high):
+    """% distance from 52-week high. Negative = below high."""
+    try:
+        if price and high and high > 0:
+            return round((price / high - 1) * 100, 2)
+        return None
+    except Exception:
+        return None
+
+# ── TradingView CSV ───────────────────────────────────────────────────────────
 
 def generate_tradingview_csv(percentile_values, first_rs_values):
     lines = []
@@ -93,19 +133,17 @@ def generate_tradingview_csv(percentile_values, first_rs_values):
         for _ in range(5):
             trading_date = yesterday - datetime.timedelta(days=trading_days)
             date_str = trading_date.strftime("%Y%m%dT")
-            csv_row = f"{date_str},0,1000,0,{rs_value},0\n"
-            lines.append(csv_row)
+            lines.append(f"{date_str},0,1000,0,{rs_value},0\n")
             trading_days += 1
 
-    reversed_lines = reversed(lines)
-    return ''.join(reversed_lines)
+    return ''.join(reversed(lines))
 
 # ── Rankings ──────────────────────────────────────────────────────────────────
 
 def rankings():
-    """Returns a dataframe with percentile rankings for relative strength"""
+    """Returns DataFrames with percentile rankings + enriched market data."""
     price_data = read_json(PRICE_DATA)
-    relative_strengths = []
+    rows = []
     ranks = []
     industries = {}
     ind_ranks = []
@@ -122,10 +160,10 @@ def rankings():
         if not cfg("NQ100") and price_data[ticker].get("universe") == "Nasdaq 100":
             continue
         try:
-            closes = list(map(lambda candle: candle["close"], price_data[ticker]["candles"]))
-            closes_ref = list(map(lambda candle: candle["close"], ref["candles"]))
+            candles    = price_data[ticker]["candles"]
+            closes     = [c["close"] for c in candles]
+            closes_ref = [c["close"] for c in ref["candles"]]
 
-            # Use cached ticker_info for industry/sector when not available directly
             industry = (
                 TICKER_INFO_DICT[ticker]["info"]["industry"]
                 if price_data[ticker].get("industry") == "unknown"
@@ -138,34 +176,51 @@ def rankings():
             )
 
             if len(closes) >= 6 * 20:
-                closes_series = pd.Series(closes)
-                closes_ref_series = pd.Series(closes_ref)
-                rs = relative_strength(closes_series, closes_ref_series)
-                month = 20
-                tmp_percentile = 100
-                rs1m = relative_strength(closes_series.head(-1 * month), closes_ref_series.head(-1 * month))
-                rs3m = relative_strength(closes_series.head(-3 * month), closes_ref_series.head(-3 * month))
-                rs6m = relative_strength(closes_series.head(-6 * month), closes_ref_series.head(-6 * month))
+                cs  = pd.Series(closes)
+                csr = pd.Series(closes_ref)
+                rs   = relative_strength(cs, csr)
+                m    = 20
+                rs1m = relative_strength(cs.head(-1 * m), csr.head(-1 * m))
+                rs3m = relative_strength(cs.head(-3 * m), csr.head(-3 * m))
+                rs6m = relative_strength(cs.head(-6 * m), csr.head(-6 * m))
 
-                # Guard against obviously corrupt price data
                 if rs < 590:
+                    # Price from last candle (most reliable — from our own data)
+                    price = round(closes[-1], 2) if closes[-1] else None
+
+                    # Avg volumes from candles — no extra API call
+                    av10 = avg_volume(candles, 10)
+                    av30 = avg_volume(candles, 30)
+                    av50 = avg_volume(candles, 50)
+                    av60 = avg_volume(candles, 60)
+
+                    # Market data from ticker_info cache
+                    mktcap = safe_info(ticker, "marketCap")
+                    flt    = safe_info(ticker, "floatShares")
+                    short  = safe_info(ticker, "shortPercentOfFloat")
+                    wk52h  = safe_info(ticker, "fiftyTwoWeekHigh")
+                    wk52l  = safe_info(ticker, "fiftyTwoWeekLow")
+                    pct52h = pct_from_52wk_high(price, wk52h)
+
                     ranks.append(len(ranks) + 1)
-                    relative_strengths.append((
-                        0, ticker, sector, industry,
+                    rows.append((
+                        0,                                        # Rank placeholder
+                        ticker, sector, industry,
                         price_data[ticker].get("universe", ""),
-                        rs, tmp_percentile, rs1m, rs3m, rs6m
+                        rs, 100,                                  # Percentile placeholder
+                        rs1m, rs3m, rs6m,
+                        price, mktcap, flt, short,
+                        wk52h, wk52l, pct52h,
+                        av10, av30, av50, av60
                     ))
                     stock_rs[ticker] = rs
 
-                    # Aggregate by industry
+                    # Industries aggregation
                     if industry not in industries:
                         industries[industry] = {
                             "info": (0, industry, sector, 0, 99, 1, 3, 6),
-                            TITLE_RS: [],
-                            TITLE_1M: [],
-                            TITLE_3M: [],
-                            TITLE_6M: [],
-                            TITLE_TICKERS: []
+                            TITLE_RS: [], TITLE_1M: [], TITLE_3M: [],
+                            TITLE_6M: [], TITLE_TICKERS: []
                         }
                         ind_ranks.append(len(ind_ranks) + 1)
                     industries[industry][TITLE_RS].append(rs)
@@ -180,22 +235,23 @@ def rankings():
     dfs = []
 
     # ── Stocks DataFrame ──────────────────────────────────────────────────────
-    df = pd.DataFrame(
-        relative_strengths,
-        columns=[TITLE_RANK, TITLE_TICKER, TITLE_SECTOR, TITLE_INDUSTRY, TITLE_UNIVERSE,
-                 TITLE_RS, TITLE_PERCENTILE, TITLE_1M, TITLE_3M, TITLE_6M]
-    )
+    cols = [
+        TITLE_RANK, TITLE_TICKER, TITLE_SECTOR, TITLE_INDUSTRY, TITLE_UNIVERSE,
+        TITLE_RS, TITLE_PERCENTILE, TITLE_1M, TITLE_3M, TITLE_6M,
+        TITLE_PRICE, TITLE_MKTCAP, TITLE_FLOAT, TITLE_SHORT,
+        TITLE_52WH, TITLE_52WL, TITLE_PCT_52WH,
+        TITLE_AVGVOL10, TITLE_AVGVOL30, TITLE_AVGVOL50, TITLE_AVGVOL60
+    ]
+    df = pd.DataFrame(rows, columns=cols)
 
-    # pandas 2.x: pd.qcut is more strict — use retbins=False, duplicates="drop"
-    df[TITLE_PERCENTILE] = pd.qcut(df[TITLE_RS], 100, labels=False, duplicates="drop")
-    df[TITLE_1M]         = pd.qcut(df[TITLE_1M], 100, labels=False, duplicates="drop")
-    df[TITLE_3M]         = pd.qcut(df[TITLE_3M], 100, labels=False, duplicates="drop")
-    df[TITLE_6M]         = pd.qcut(df[TITLE_6M], 100, labels=False, duplicates="drop")
+    df[TITLE_PERCENTILE] = pd.qcut(df[TITLE_RS],  100, labels=False, duplicates="drop")
+    df[TITLE_1M]         = pd.qcut(df[TITLE_1M],  100, labels=False, duplicates="drop")
+    df[TITLE_3M]         = pd.qcut(df[TITLE_3M],  100, labels=False, duplicates="drop")
+    df[TITLE_6M]         = pd.qcut(df[TITLE_6M],  100, labels=False, duplicates="drop")
 
     df = df.sort_values([TITLE_RS], ascending=False)
     df[TITLE_RANK] = list(range(1, len(df) + 1))
 
-    # Filter by MIN_PERCENTILE
     out_tickers_count = int((df[TITLE_PERCENTILE] >= MIN_PERCENTILE).sum())
     df = df.head(out_tickers_count)
 
@@ -206,7 +262,6 @@ def rankings():
     for percentile in percentile_values:
         matching = df[df[TITLE_PERCENTILE] == percentile]
         if matching.empty:
-            # Fallback: find nearest available percentile value
             available = df[TITLE_PERCENTILE].dropna().unique()
             if len(available) == 0:
                 continue
@@ -215,11 +270,10 @@ def rankings():
         if not matching.empty:
             first_rs_values[percentile] = matching.iloc[0][TITLE_RS]
 
-    # Only generate if we have all values
     if len(first_rs_values) == len(percentile_values):
-        tradingview_csv_content = generate_tradingview_csv(percentile_values, first_rs_values)
-        with open(os.path.join(DIR, "output", "RSRATING.csv"), "w") as csv_file:
-            csv_file.write(tradingview_csv_content)
+        tv_csv = generate_tradingview_csv(percentile_values, first_rs_values)
+        with open(os.path.join(DIR, "output", "RSRATING.csv"), "w") as f:
+            f.write(tv_csv)
         print("✓ RSRATING.csv generated for TradingView.")
     else:
         print("⚠ Could not generate RSRATING.csv — not enough percentile data points.")
@@ -235,40 +289,38 @@ def rankings():
         return a + b
 
     def getRsAverage(ind_dict, industry, column):
-        rs = reduce(rs_sum, ind_dict[industry][column]) / len(ind_dict[industry][column])
-        return int(rs * 100) / 100
+        vals = ind_dict[industry][column]
+        return int((reduce(rs_sum, vals) / len(vals)) * 100) / 100
 
-    def rs_for_stock(ticker):
-        return stock_rs.get(ticker, 0)
+    def rs_for_stock(t):
+        return stock_rs.get(t, 0)
 
     def getTickers(ind_dict, industry):
         return ",".join(sorted(ind_dict[industry][TITLE_TICKERS], key=rs_for_stock, reverse=True))
 
-    filtered_industries = list(filter(lambda i: len(i[TITLE_TICKERS]) > 1, list(industries.values())))
-    df_industries = pd.DataFrame(
-        map(getDfView, filtered_industries),
-        columns=[TITLE_RANK, TITLE_INDUSTRY, TITLE_SECTOR, TITLE_RS, TITLE_PERCENTILE,
-                 TITLE_1M, TITLE_3M, TITLE_6M]
+    filtered = list(filter(lambda i: len(i[TITLE_TICKERS]) > 1, list(industries.values())))
+    df_ind = pd.DataFrame(
+        map(getDfView, filtered),
+        columns=[TITLE_RANK, TITLE_INDUSTRY, TITLE_SECTOR, TITLE_RS,
+                 TITLE_PERCENTILE, TITLE_1M, TITLE_3M, TITLE_6M]
     )
 
-    df_industries[TITLE_RS]  = df_industries.apply(lambda row: getRsAverage(industries, row[TITLE_INDUSTRY], TITLE_RS), axis=1)
-    df_industries[TITLE_1M]  = df_industries.apply(lambda row: getRsAverage(industries, row[TITLE_INDUSTRY], TITLE_1M), axis=1)
-    df_industries[TITLE_3M]  = df_industries.apply(lambda row: getRsAverage(industries, row[TITLE_INDUSTRY], TITLE_3M), axis=1)
-    df_industries[TITLE_6M]  = df_industries.apply(lambda row: getRsAverage(industries, row[TITLE_INDUSTRY], TITLE_6M), axis=1)
+    df_ind[TITLE_RS]  = df_ind.apply(lambda r: getRsAverage(industries, r[TITLE_INDUSTRY], TITLE_RS),  axis=1)
+    df_ind[TITLE_1M]  = df_ind.apply(lambda r: getRsAverage(industries, r[TITLE_INDUSTRY], TITLE_1M),  axis=1)
+    df_ind[TITLE_3M]  = df_ind.apply(lambda r: getRsAverage(industries, r[TITLE_INDUSTRY], TITLE_3M),  axis=1)
+    df_ind[TITLE_6M]  = df_ind.apply(lambda r: getRsAverage(industries, r[TITLE_INDUSTRY], TITLE_6M),  axis=1)
 
-    df_industries[TITLE_PERCENTILE] = pd.qcut(df_industries[TITLE_RS], 100, labels=False, duplicates="drop")
-    df_industries[TITLE_1M]         = pd.qcut(df_industries[TITLE_1M], 100, labels=False, duplicates="drop")
-    df_industries[TITLE_3M]         = pd.qcut(df_industries[TITLE_3M], 100, labels=False, duplicates="drop")
-    df_industries[TITLE_6M]         = pd.qcut(df_industries[TITLE_6M], 100, labels=False, duplicates="drop")
+    df_ind[TITLE_PERCENTILE] = pd.qcut(df_ind[TITLE_RS], 100, labels=False, duplicates="drop")
+    df_ind[TITLE_1M]         = pd.qcut(df_ind[TITLE_1M], 100, labels=False, duplicates="drop")
+    df_ind[TITLE_3M]         = pd.qcut(df_ind[TITLE_3M], 100, labels=False, duplicates="drop")
+    df_ind[TITLE_6M]         = pd.qcut(df_ind[TITLE_6M], 100, labels=False, duplicates="drop")
 
-    df_industries[TITLE_TICKERS] = df_industries.apply(
-        lambda row: getTickers(industries, row[TITLE_INDUSTRY]), axis=1
-    )
-    df_industries = df_industries.sort_values([TITLE_RS], ascending=False)
-    df_industries[TITLE_RANK] = list(range(1, len(df_industries) + 1))
+    df_ind[TITLE_TICKERS] = df_ind.apply(lambda r: getTickers(industries, r[TITLE_INDUSTRY]), axis=1)
+    df_ind = df_ind.sort_values([TITLE_RS], ascending=False)
+    df_ind[TITLE_RANK] = list(range(1, len(df_ind) + 1))
 
-    df_industries.to_csv(os.path.join(DIR, "output", 'rs_industries.csv'), index=False)
-    dfs.append(df_industries)
+    df_ind.to_csv(os.path.join(DIR, "output", 'rs_industries.csv'), index=False)
+    dfs.append(df_ind)
 
     return dfs
 
