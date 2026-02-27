@@ -350,19 +350,71 @@ def escape_ticker(ticker):
 def get_info_from_dict(d, key):
     return d[key] if key in d else "n/a"
 
-def load_ticker_info(ticker, info_dict):
-    escaped = escape_ticker(ticker)
+def _safe_float(d, key):
+    """Return float value from dict or None if missing/invalid."""
     try:
-        info_obj = yf.Ticker(escaped).info
-        ticker_info = {
-            "info": {
-                "industry": get_info_from_dict(info_obj, "industry"),
-                "sector": get_info_from_dict(info_obj, "sector")
-            }
-        }
+        v = d.get(key) if hasattr(d, 'get') else getattr(d, key, None)
+        return float(v) if v is not None else None
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+def load_ticker_info(ticker, info_dict):
+    """
+    Fetch and cache ticker metadata.
+    Uses fast_info (yfinance 1.x, snake_case) for price/market data — much more reliable.
+    Falls back to .info for sector/industry/float/short which aren't in fast_info.
+    """
+    escaped = escape_ticker(ticker)
+    result = {
+        "industry": "n/a", "sector": "n/a",
+        "marketCap": None, "floatShares": None,
+        "shortPercentOfFloat": None,
+        "fiftyTwoWeekHigh": None, "fiftyTwoWeekLow": None,
+    }
+
+    try:
+        t = yf.Ticker(escaped)
+
+        # ── fast_info: reliable in yfinance 1.x, camelCase keys ─────────────
+        try:
+            fi = t.fast_info
+            result["marketCap"]        = _safe_float(fi, "marketCap")
+            result["fiftyTwoWeekHigh"] = _safe_float(fi, "yearHigh")
+            result["fiftyTwoWeekLow"]  = _safe_float(fi, "yearLow")
+            result["floatShares"]      = _safe_float(fi, "shares")
+        except Exception:
+            pass
+
+        # ── .info: uniquement pour sector/industry/short qui ne sont pas dans fast_info ──
+        try:
+            info_obj = t.info
+            result["industry"]            = get_info_from_dict(info_obj, "industry")
+            result["sector"]              = get_info_from_dict(info_obj, "sector")
+            result["shortPercentOfFloat"] = (
+                _safe_float(info_obj, "shortPercentOfFloat") or
+                _safe_float(info_obj, "shortRatio")
+            )
+            # marketCap fallback si fast_info n'a rien retourné
+            if result["marketCap"] is None:
+                result["marketCap"] = _safe_float(info_obj, "marketCap")
+        except Exception:
+            pass
+
     except Exception:
-        ticker_info = {"info": {"industry": "n/a", "sector": "n/a"}}
-    info_dict[ticker] = ticker_info
+        pass
+
+    info_dict[ticker] = {"info": result}
+
+def needs_refresh(ticker, info_dict):
+    """
+    True if cached entry is missing the new market data fields.
+    Triggers a one-time re-fetch on first run after this update.
+    """
+    try:
+        info = info_dict[ticker]["info"]
+        return "marketCap" not in info
+    except (KeyError, TypeError):
+        return True
 
 # ── Core: batch price download from Yahoo ─────────────────────────────────────
 
@@ -524,8 +576,9 @@ def load_prices_from_yahoo(securities, info={}):
             ticker_data = {"candles": candles}
             enrich_ticker_data(ticker_data, sec)
 
-            # Industry / sector info (cached in ticker_info.json)
-            if original not in TICKER_INFO_DICT:
+            # Industry / sector / market data info (cached in ticker_info.json)
+            # Re-fetch if missing OR if new fields (marketCap etc.) not yet in cache
+            if original not in TICKER_INFO_DICT or needs_refresh(original, TICKER_INFO_DICT):
                 try:
                     load_ticker_info(original, TICKER_INFO_DICT)
                 except Exception as e:
