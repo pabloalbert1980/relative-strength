@@ -278,7 +278,20 @@ def rankings():
     else:
         print("⚠ Could not generate RSRATING.csv — not enough percentile data points.")
 
-    df.to_csv(os.path.join(DIR, "output", 'rs_stocks.csv'), index=False)
+    # ── Split into two CSVs to stay under GitHub 500KB display limit ─────────
+    # rs_stocks_1.csv → Percentile 50-99 (strongest stocks, most useful)
+    # rs_stocks_2.csv → Percentile 0-49  (rest)
+    df_top = df[df[TITLE_PERCENTILE] >= 50].copy()
+    df_bot = df[df[TITLE_PERCENTILE] <  50].copy()
+
+    df_top.to_csv(os.path.join(DIR, "output", "rs_stocks_1.csv"), index=False)
+    df_bot.to_csv(os.path.join(DIR, "output", "rs_stocks_2.csv"), index=False)
+
+    # Full file kept for programmatic use (not rendered by GitHub but downloadable)
+    df.to_csv(os.path.join(DIR, "output", "rs_stocks.csv"), index=False)
+
+    print(f"✓ rs_stocks_1.csv: {len(df_top)} tickers (Percentile 50-99)")
+    print(f"✓ rs_stocks_2.csv: {len(df_bot)} tickers (Percentile 0-49)")
     dfs.append(df)
 
     # ── Industries DataFrame ──────────────────────────────────────────────────
