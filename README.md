@@ -35,7 +35,7 @@ Updated every weekday automatically via GitHub Actions (~16 min run, ~6100 ticke
 The easiest way to filter, sort, and scan the full dataset.  
 Use the **raw** GitHub URLs with `IMPORTDATA()` — no login required, auto-refreshes on open.
 
-### Full dataset in one sheet (recommended)
+### Full dataset in one sheet
 
 Paste this in cell `A1`:
 ```
