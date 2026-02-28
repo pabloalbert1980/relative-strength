@@ -13,7 +13,7 @@ TradingView indicator using this data: **https://www.tradingview.com/script/pziQ
 
 ## Daily Generated Outputs
 
-Updated every weekday automatically via GitHub Actions (~16 min run, ~6800 tickers).
+Updated every weekday automatically via GitHub Actions (~16 min run, ~6100 tickers).
 
 ### Browsable on GitHub (rendered as table)
 
@@ -27,7 +27,7 @@ Updated every weekday automatically via GitHub Actions (~16 min run, ~6800 ticke
 
 | File | Content |
 |------|---------|
-| [rs_stocks.csv](https://github.com/Fred6725/rs-log/blob/main/output/rs_stocks.csv) | All ~6800 stocks in one file |
+| [rs_stocks.csv](https://github.com/Fred6725/rs-log/blob/main/output/rs_stocks.csv) | All ~6100 stocks in one file |
 
 ---
 
@@ -105,7 +105,7 @@ All stocks are then ranked and assigned a percentile from 99 (strongest) to 0 (w
 
 ## Considered Stocks
 
-All tickers from [nasdaqtrader.com](https://www.nasdaqtrader.com/dynamic/symdir/nasdaqtraded.txt), excluding ETFs and test issues (~6800 stocks across NYSE, NASDAQ, NYSE ARCA, BATS).
+All tickers from [nasdaqtrader.com](https://www.nasdaqtrader.com/dynamic/symdir/nasdaqtraded.txt), excluding ETFs and test issues (~6100 stocks across NYSE, NASDAQ, NYSE ARCA, BATS).
 
 ---
 
