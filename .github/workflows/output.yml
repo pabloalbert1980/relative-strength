@@ -59,6 +59,8 @@ jobs:
       - name: Copy outputs to rs-log
         run: |
           cp output/rs_stocks.csv     rs-log/output/rs_stocks.csv
+          cp output/rs_stocks_1.csv   rs-log/output/rs_stocks_1.csv
+          cp output/rs_stocks_2.csv   rs-log/output/rs_stocks_2.csv
           cp output/rs_industries.csv rs-log/output/rs_industries.csv
           cp output/RSRATING.csv      rs-log/output/RSRATING.csv
 
