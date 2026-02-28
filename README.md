@@ -43,18 +43,6 @@ Paste this in cell `A1`:
 =IMPORTDATA("https://raw.githubusercontent.com/Fred6725/rs-log/main/output/rs_stocks.csv",",",0)
 ```
 
-### Split view (top 50 + rest, no duplicate header)
-
-In sheet 1, cell `A1`:
-```
-=IMPORTDATA("https://raw.githubusercontent.com/Fred6725/rs-log/main/output/rs_stocks_1.csv",",",0)
-```
-
-In sheet 2, cell `A1` — use `QUERY` to skip the header row:
-```
-=QUERY(IMPORTDATA("https://raw.githubusercontent.com/Fred6725/rs-log/main/output/rs_stocks_2.csv",",",0), "SELECT * WHERE Col1 <> 'Rank'", 0)
-```
-
 ### What you can filter on
 
 Once imported, use standard Google Sheets filters or `QUERY()` to slice by:
