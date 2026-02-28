@@ -6,6 +6,7 @@
 #   3. Batch yfinance downloads (100 tickers at a time) → ~25 min instead of hours
 #   4. Removed broken session/user-agent hack (curl_cffi handles this transparently)
 #   5. pandas 2.x compatible (MultiIndex column handling)
+#   6. Correct yfinance exchange code → display name mapping (NYQ/NMS/NCM/NGM/ASE/ARC/BTS)
 
 import requests
 import json
@@ -80,6 +81,18 @@ REF_TICKER = {
 }
 
 UNKNOWN = "unknown"
+
+# Exchange code mapping: yfinance codes → human-readable exchange names
+# yfinance returns these codes in Ticker.info['exchange']
+YFINANCE_EXCHANGE_MAP = {
+    'NYQ': 'NYSE',        # New York Stock Exchange
+    'NMS': 'NASDAQ',      # NASDAQ Global Market
+    'NCM': 'NASDAQ',      # NASDAQ Capital Market
+    'NGM': 'NASDAQ',      # NASDAQ Global Market
+    'ASE': 'AMEX',        # American Stock Exchange
+    'ARC': 'NYSE ARCA',   # NYSE ARCA
+    'BTS': 'BATS',        # BATS Exchange
+}
 
 # Batch size for yfinance bulk downloads — 100 is a sweet spot (speed vs reliability)
 BATCH_SIZE = 100
@@ -254,8 +267,13 @@ def get_tickers_from_wikipedia(tickers):
     return tickers
 
 def exchange_from_symbol(symbol):
+    """Map NASDAQ trader file single-letter exchange codes to display names."""
     mapping = {"Q": "NASDAQ", "A": "NYSE MKT", "N": "NYSE", "P": "NYSE ARCA", "Z": "BATS", "V": "IEXG"}
     return mapping.get(symbol, "n/a")
+
+def exchange_from_yfinance(code):
+    """Map yfinance exchange codes (e.g. 'NYQ', 'NMS') to display names."""
+    return YFINANCE_EXCHANGE_MAP.get(code, code if code else "n/a")
 
 def get_tickers_from_nasdaq(tickers):
     """
@@ -397,6 +415,8 @@ def load_ticker_info(ticker, info_dict):
             # marketCap fallback si fast_info n'a rien retourné
             if result["marketCap"] is None:
                 result["marketCap"] = _safe_float(info_obj, "marketCap")
+            # Map yfinance exchange code to a readable exchange name
+            result["exchange"] = exchange_from_yfinance(info_obj.get("exchange", ""))
         except Exception:
             pass
 
@@ -589,6 +609,15 @@ def load_prices_from_yahoo(securities, info={}):
                 ticker_data["sector"]   = TICKER_INFO_DICT[original]["info"]["sector"]
             except (KeyError, TypeError):
                 ticker_data["industry"] = "Unknown"
+
+            # If universe wasn't resolved from the NASDAQ listing file,
+            # fall back to the exchange name derived from yfinance.
+            try:
+                yf_exchange = TICKER_INFO_DICT[original]["info"].get("exchange")
+                if yf_exchange and ticker_data.get("universe") in (None, "n/a", UNKNOWN):
+                    ticker_data["universe"] = yf_exchange
+            except (KeyError, TypeError):
+                pass
 
             tickers_dict[original] = ticker_data
 
