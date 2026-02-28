@@ -1,7 +1,6 @@
 # RS Rating — IBD Style Relative Strength
 
 > Fork of [Skyte](https://github.com/skyte/relative-strength)'s project, modified by [maximbelyayev](https://github.com/maximbelyayev/relative-strength), maintained by [Fred6725](https://github.com/Fred6725).  
-> Maintenance assistance provided by [Claude](https://claude.ai) (Anthropic).
 
 IBD Style Relative Strength Percentile Ranking of Stocks (0-99 score).  
 TradingView indicator using this data: **https://www.tradingview.com/script/pziQwiT2/**
