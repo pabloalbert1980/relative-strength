@@ -2,7 +2,7 @@
 # rs_ranking.py — Updated version
 # New columns in rs_stocks.csv:
 #   Price, MarketCap, Float, ShortFloatPct, 52WkHigh, 52WkLow, PctFrom52WkHigh,
-#   AvgVol10, AvgVol30, AvgVol50, AvgVol60
+#   AvgVol10, AvgVol30, AvgVol50, RevenueGrowth
 # Avg volumes calculated from candles (no extra API call).
 # Market data from ticker_info.json cache (populated by rs_data.py).
 
@@ -57,13 +57,11 @@ TITLE_PRICE      = "Price"
 TITLE_MKTCAP     = "MarketCap"
 TITLE_FLOAT      = "Float"
 TITLE_SHORT      = "ShortFloatPct"
-TITLE_52WH       = "52WkHigh"
-TITLE_52WL       = "52WkLow"
 TITLE_PCT_52WH   = "PctFrom52WkHigh"
 TITLE_AVGVOL10   = "AvgVol10"
 TITLE_AVGVOL30   = "AvgVol30"
 TITLE_AVGVOL50   = "AvgVol50"
-TITLE_AVGVOL60   = "AvgVol60"
+TITLE_REVGROWTH  = "RevenueGrowth"
 
 if not os.path.exists('output'):
     os.makedirs('output')
@@ -175,6 +173,12 @@ def rankings():
                 else price_data[ticker].get("sector", "unknown")
             )
 
+            # Skip tickers with no sector AND no industry — likely ETFs or
+            # structured products that slipped through the NASDAQ ETF filter
+            no_data = ("unknown", "n/a", "Unknown", "N/A", None, "")
+            if sector in no_data and industry in no_data:
+                continue
+
             if len(closes) >= 6 * 20:
                 cs  = pd.Series(closes)
                 csr = pd.Series(closes_ref)
@@ -192,14 +196,13 @@ def rankings():
                     av10 = avg_volume(candles, 10)
                     av30 = avg_volume(candles, 30)
                     av50 = avg_volume(candles, 50)
-                    av60 = avg_volume(candles, 60)
+                    rev_growth = safe_info(ticker, "revenueGrowth")
 
                     # Market data from ticker_info cache
                     mktcap = safe_info(ticker, "marketCap")
                     flt    = safe_info(ticker, "floatShares")
                     short  = safe_info(ticker, "shortPercentOfFloat")
-                    wk52h  = safe_info(ticker, "fiftyTwoWeekHigh")
-                    wk52l  = safe_info(ticker, "fiftyTwoWeekLow")
+                    wk52h  = safe_info(ticker, "fiftyTwoWeekHigh")  # kept for pct calc only
                     pct52h = pct_from_52wk_high(price, wk52h)
 
                     ranks.append(len(ranks) + 1)
@@ -210,8 +213,8 @@ def rankings():
                         rs, 100,                                  # Percentile placeholder
                         rs1m, rs3m, rs6m,
                         price, mktcap, flt, short,
-                        wk52h, wk52l, pct52h,
-                        av10, av30, av50, av60
+                        pct52h,
+                        av10, av30, av50, rev_growth
                     ))
                     stock_rs[ticker] = rs
 
@@ -239,8 +242,8 @@ def rankings():
         TITLE_RANK, TITLE_TICKER, TITLE_SECTOR, TITLE_INDUSTRY, TITLE_UNIVERSE,
         TITLE_RS, TITLE_PERCENTILE, TITLE_1M, TITLE_3M, TITLE_6M,
         TITLE_PRICE, TITLE_MKTCAP, TITLE_FLOAT, TITLE_SHORT,
-        TITLE_52WH, TITLE_52WL, TITLE_PCT_52WH,
-        TITLE_AVGVOL10, TITLE_AVGVOL30, TITLE_AVGVOL50, TITLE_AVGVOL60
+        TITLE_PCT_52WH,
+        TITLE_AVGVOL10, TITLE_AVGVOL30, TITLE_AVGVOL50, TITLE_REVGROWTH
     ]
     df = pd.DataFrame(rows, columns=cols)
 
